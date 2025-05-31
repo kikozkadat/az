@@ -1,4 +1,4 @@
-# gui/live_trading_panel.py - Továbbfejlesztett verzió
+# gui/live_trading_panel.py - Javított verzió ALACSONYABB KÜSZÖBÖKKEL
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, 
                             QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox,
@@ -44,12 +44,12 @@ class LiveTradingWorker(QThread):
     def scan_for_opportunities(self):
         """Scan for trading opportunities"""
         try:
-            # Mock opportunity generation
+            # Mock opportunity generation - JAVÍTOTT: magasabb score range
             if random.random() < 0.1:  # 10% chance
                 opportunity = {
                     'pair': random.choice(['ADAUSD', 'SOLUSD', 'DOTUSD', 'LINKUSD']),
-                    'score': random.uniform(0.6, 0.9),
-                    'confidence': random.uniform(0.65, 0.85),
+                    'score': random.uniform(0.4, 0.9),  # ← JAVÍTVA: 0.6→0.4 (alacsonyabb alsó határ)
+                    'confidence': random.uniform(0.5, 0.85),  # ← JAVÍTVA: 0.65→0.5
                     'volume_usd': random.uniform(1000000, 5000000),
                     'reason': 'Volume spike + Bollinger breakout'
                 }
@@ -89,7 +89,7 @@ class LiveTradingPanel(QWidget):
         self.setup_connections()
         self.setup_update_timer()
         
-        print("✅ LiveTradingPanel initialized successfully")
+        print("✅ LiveTradingPanel initialized with optimized thresholds")
 
     def setup_ui(self):
         """Setup the user interface"""
@@ -203,8 +203,8 @@ class LiveTradingPanel(QWidget):
         return group
 
     def create_settings_panel(self):
-        """Create settings panel"""
-        group = QGroupBox("Micro-Trading Settings")
+        """Create settings panel - JAVÍTOTT KÜSZÖBÖKKEL"""
+        group = QGroupBox("Micro-Trading Settings (Optimized)")
         layout = QGridLayout()
         
         # Auto trading
@@ -227,11 +227,11 @@ class LiveTradingPanel(QWidget):
         self.max_positions_spin.setValue(1)
         layout.addWidget(self.max_positions_spin, 2, 1)
         
-        # Confidence threshold
+        # 🎯 JAVÍTOTT: Confidence threshold - ALACSONYABB KÜSZÖB
         layout.addWidget(QLabel("Min Confidence:"), 3, 0)
         self.confidence_spin = QDoubleSpinBox()
-        self.confidence_spin.setRange(0.5, 0.9)
-        self.confidence_spin.setValue(0.7)
+        self.confidence_spin.setRange(0.3, 0.8)  # ← JAVÍTVA: 0.5-0.9 → 0.3-0.8
+        self.confidence_spin.setValue(0.5)       # ← JAVÍTVA: 0.7 → 0.5
         self.confidence_spin.setDecimals(2)
         self.confidence_spin.setSingleStep(0.05)
         layout.addWidget(self.confidence_spin, 3, 1)
@@ -244,10 +244,31 @@ class LiveTradingPanel(QWidget):
         self.stop_loss_spin.setDecimals(1)
         layout.addWidget(self.stop_loss_spin, 4, 1)
         
+        # 🎯 ÚJ: Min Score Threshold (explicit control)
+        layout.addWidget(QLabel("Min Score:"), 5, 0)
+        self.min_score_spin = QDoubleSpinBox()
+        self.min_score_spin.setRange(0.3, 0.8)
+        self.min_score_spin.setValue(0.45)  # 45% alapértelmezett
+        self.min_score_spin.setDecimals(2)
+        self.min_score_spin.setSingleStep(0.05)
+        layout.addWidget(self.min_score_spin, 5, 1)
+        
         # Apply button
         apply_btn = QPushButton("Apply Settings")
         apply_btn.clicked.connect(self.apply_settings)
-        layout.addWidget(apply_btn, 5, 0, 1, 2)
+        apply_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498DB;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2980B9;
+            }
+        """)
+        layout.addWidget(apply_btn, 6, 0, 1, 2)
         
         group.setLayout(layout)
         return group
@@ -325,6 +346,7 @@ class LiveTradingPanel(QWidget):
         self.max_positions_spin.valueChanged.connect(self.on_settings_changed)
         self.confidence_spin.valueChanged.connect(self.on_settings_changed)
         self.stop_loss_spin.valueChanged.connect(self.on_settings_changed)
+        self.min_score_spin.valueChanged.connect(self.on_settings_changed)  # ← ÚJ
         self.auto_trading_cb.toggled.connect(self.on_settings_changed)
 
     def setup_update_timer(self):
@@ -339,10 +361,12 @@ class LiveTradingPanel(QWidget):
             if self.is_trading:
                 return
                 
-            print("🚀 Starting live trading...")
+            print("🚀 Starting live trading with optimized settings...")
             
             # Create and start worker
             settings = self.get_current_settings()
+            print(f"📊 Trading settings: Confidence≥{settings['confidence_threshold']:.2f}, Score≥{settings.get('min_score_for_auto_trade', 0.45):.2f}")
+            
             self.worker = LiveTradingWorker(settings, self.api_client)
             self.worker.opportunity_found.connect(self.on_opportunity_found)
             self.worker.trade_executed.connect(self.on_trade_executed)
@@ -361,6 +385,9 @@ class LiveTradingPanel(QWidget):
             self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #00FF00;")
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
+            
+            # Log to opportunities
+            self.opportunities_text.append(f"🚀 TRADING STARTED - Conf≥{settings['confidence_threshold']:.2f}, Score≥{settings.get('min_score_for_auto_trade', 0.45):.2f}")
             
             # Emit signal
             self.start_live_trading.emit()
@@ -393,6 +420,9 @@ class LiveTradingPanel(QWidget):
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             
+            # Log to opportunities
+            self.opportunities_text.append("🔴 TRADING STOPPED")
+            
             # Emit signal
             self.stop_live_trading.emit()
             
@@ -412,6 +442,9 @@ class LiveTradingPanel(QWidget):
             self.status_label.setText("Status: 🚨 EMERGENCY STOP")
             self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #FF0000;")
             
+            # Log to opportunities
+            self.opportunities_text.append("🚨 EMERGENCY STOP ACTIVATED!")
+            
             # Emit emergency signal
             self.emergency_stop.emit()
             
@@ -422,6 +455,10 @@ class LiveTradingPanel(QWidget):
         """Apply current settings"""
         settings = self.get_current_settings()
         self.settings_changed.emit(settings)
+        
+        # Log settings change
+        self.opportunities_text.append(f"⚙️ Settings updated: Conf≥{settings['confidence_threshold']:.2f}, Score≥{settings.get('min_score_for_auto_trade', 0.45):.2f}")
+        
         print(f"⚙️ Settings applied: {settings}")
 
     def on_settings_changed(self):
@@ -441,21 +478,30 @@ class LiveTradingPanel(QWidget):
             self.opportunities_text.append(f"❌ Scan error: {e}")
 
     def simulate_scan_results(self):
-        """Simulate scan results"""
+        """Simulate scan results - JAVÍTOTT: reálisabb score range"""
         pairs = ['ADAUSD', 'SOLUSD', 'DOTUSD', 'LINKUSD', 'UNIUSD']
         
         self.opportunities_text.append("📊 Scan results:")
         
         for pair in pairs:
-            score = random.uniform(0.3, 0.9)
-            confidence = random.uniform(0.6, 0.85)
+            score = random.uniform(0.3, 0.9)  # ← JAVÍTVA: szélesebb range
+            confidence = random.uniform(0.4, 0.85)  # ← JAVÍTVA: alacsonyabb alsó határ
             volume = random.uniform(500000, 5000000)
             
-            if score > 0.6:
-                color = "🟢" if score > 0.8 else "🟡"
-                self.opportunities_text.append(
-                    f"  {color} {pair}: Score {score:.2f}, Conf {confidence:.2f}, Vol ${volume:,.0f}"
-                )
+            min_score = self.min_score_spin.value()
+            min_conf = self.confidence_spin.value()
+            
+            # Színkódolás az aktuális küszöbök alapján
+            if score >= min_score and confidence >= min_conf:
+                color = "🟢"  # TRADABLE
+            elif score >= min_score * 0.9:
+                color = "🟡"  # CLOSE
+            else:
+                color = "🔴"  # TOO LOW
+                
+            self.opportunities_text.append(
+                f"  {color} {pair}: Score {score:.2f}, Conf {confidence:.2f}, Vol ${volume:,.0f}"
+            )
 
     def on_opportunity_found(self, opportunity):
         """Handle opportunity found"""
@@ -464,8 +510,17 @@ class LiveTradingPanel(QWidget):
             score = opportunity['score']
             confidence = opportunity['confidence']
             
+            min_score = self.min_score_spin.value()
+            min_conf = self.confidence_spin.value()
+            
+            # Színkódolás a küszöbök alapján
+            if score >= min_score and confidence >= min_conf:
+                color = "🟢 TRADABLE"
+            else:
+                color = "🟡 BELOW THRESHOLD"
+            
             self.opportunities_text.append(
-                f"🎯 OPPORTUNITY: {pair} (Score: {score:.2f}, Conf: {confidence:.2f})"
+                f"🎯 {color}: {pair} (Score: {score:.2f}, Conf: {confidence:.2f}) vs Req: {min_score:.2f}/{min_conf:.2f}"
             )
             
             # Auto-scroll to bottom
@@ -557,6 +612,9 @@ class LiveTradingPanel(QWidget):
             if not opportunities:
                 return
                 
+            min_score = self.min_score_spin.value()
+            min_conf = self.confidence_spin.value()
+            
             self.opportunities_text.append("📊 New opportunities detected:")
             
             for opp in opportunities[:5]:  # Show top 5
@@ -565,7 +623,13 @@ class LiveTradingPanel(QWidget):
                 confidence = opp.get('confidence', 0)
                 reason = opp.get('reason', 'Unknown')
                 
-                color = "🟢" if score > 0.8 else "🟡" if score > 0.6 else "🔴"
+                # Színkódolás az aktuális küszöbök alapján
+                if score >= min_score and confidence >= min_conf:
+                    color = "🟢"  # TRADABLE
+                elif score >= min_score * 0.9:
+                    color = "🟡"  # CLOSE
+                else:
+                    color = "🔴"  # TOO LOW
                 
                 self.opportunities_text.append(
                     f"  {color} {pair}: {score:.2f} ({confidence:.1%}) - {reason}"
@@ -594,27 +658,35 @@ class LiveTradingPanel(QWidget):
             print(f"Trade stats update error: {e}")
 
     def get_current_settings(self):
-        """Get current settings dictionary"""
+        """Get current settings dictionary - JAVÍTOTT KÜSZÖBÖKKEL"""
         try:
             return {
-                'auto_trading': self.auto_trading_cb.isChecked(),
-                'position_size': self.position_size_spin.value(),
-                'max_positions': self.max_positions_spin.value(),
+                'auto_trading_enabled': self.auto_trading_cb.isChecked(),  # ← JAVÍTVA: auto_trading → auto_trading_enabled
+                'position_size_usd': self.position_size_spin.value(),
+                'max_active_trades': self.max_positions_spin.value(),  # ← JAVÍTVA: max_positions → max_active_trades
                 'confidence_threshold': self.confidence_spin.value(),
                 'stop_loss_pct': self.stop_loss_spin.value(),
+                'min_score_for_auto_trade': self.min_score_spin.value(),  # ← ÚJ: explicit score threshold
+                'take_profit_target_pct': 0.8,  # Fixed 0.8% target
                 'trading_mode': 'live',
                 'scan_interval': 30,
                 'risk_per_trade': 4.0,
+                
+                # Compatibility aliases
+                'auto_trading': self.auto_trading_cb.isChecked(),
+                'position_size': self.position_size_spin.value(),
+                'max_positions': self.max_positions_spin.value(),
                 'take_profit_target': 0.3
             }
         except Exception as e:
             print(f"Get settings error: {e}")
             return {
-                'auto_trading': False,
-                'position_size': 50.0,
-                'max_positions': 1,
-                'confidence_threshold': 0.7,
-                'stop_loss_pct': 4.0
+                'auto_trading_enabled': False,
+                'position_size_usd': 50.0,
+                'max_active_trades': 1,
+                'confidence_threshold': 0.5,
+                'stop_loss_pct': 4.0,
+                'min_score_for_auto_trade': 0.45  # ← KEY FIX: 45% score threshold
             }
 
     def get_session_stats(self):
@@ -645,6 +717,16 @@ class LiveTradingPanel(QWidget):
         """Check if trading is currently active"""
         return self.is_trading
 
+    def set_trading_active_status(self, status):
+        """Set trading active status (external call)"""
+        self.is_trading = status
+        if status:
+            self.status_label.setText("Status: 🟢 LIVE TRADING")
+            self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #00FF00;")
+        else:
+            self.status_label.setText("Status: 🔴 STOPPED")
+            self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #FF4444;")
+
     def closeEvent(self, event):
         """Handle widget close event"""
         try:
@@ -667,14 +749,21 @@ if __name__ == "__main__":
     panel = LiveTradingPanel()
     panel.show()
     
-    # Test with mock opportunities
+    # Test with mock opportunities - JAVÍTOTT: reálisabb score range
     test_opportunities = [
-        {'pair': 'ADAUSD', 'score': 0.85, 'confidence': 0.75, 'reason': 'Volume spike'},
-        {'pair': 'SOLUSD', 'score': 0.72, 'confidence': 0.68, 'reason': 'Bollinger breakout'},
-        {'pair': 'DOTUSD', 'score': 0.91, 'confidence': 0.82, 'reason': 'Perfect storm'}
+        {'pair': 'ADAUSD', 'score': 0.52, 'confidence': 0.55, 'reason': 'Volume spike'},  # ← Most már TRADABLE
+        {'pair': 'SOLUSD', 'score': 0.48, 'confidence': 0.51, 'reason': 'Bollinger breakout'},  # ← TRADABLE
+        {'pair': 'DOTUSD', 'score': 0.42, 'confidence': 0.47, 'reason': 'Independence move'},  # ← CLOSE
+        {'pair': 'LINKUSD', 'score': 0.58, 'confidence': 0.62, 'reason': 'Perfect storm'}  # ← TRADABLE
     ]
     
     # Simulate opportunity update after 3 seconds
     QTimer.singleShot(3000, lambda: panel.update_opportunities(test_opportunities))
+    
+    print("🎯 Test panel started with optimized thresholds:")
+    print("   - Min Confidence: 50% (was 70%)")
+    print("   - Min Score: 45% (new explicit control)")
+    print("   - Range: 30-80% (was 50-90%)")
+    print("   - Now ADA 0.52 score > 0.45 threshold = ✅ TRADABLE!")
     
     sys.exit(app.exec_())

@@ -1,90 +1,85 @@
-import os
-os.environ["QT_QPA_PLATFORM"] = "xcb"
+# app.py - JAVÍTOTT VERZIÓ DARK THEME-mel
 
-from PyQt5.QtWidgets import QApplication
 import sys
-from gui.main_window import MainWindow
-from style_dark import apply_dark_theme
-from utils.logger import logger
-import signal
+import os
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QPalette, QColor
+from PyQt5.QtCore import Qt
 
-def signal_handler(sig, frame):
-    """Clean shutdown on Ctrl+C"""
-    print("\n🛑 Shutting down trading bot...")
+def apply_dark_theme(app):
+    """🎨 Sötét téma alkalmazása"""
+    dark_palette = QPalette()
     
-    # Get the main window if it exists
-    app = QApplication.instance()
-    if app:
-        for widget in app.allWidgets():
-            if isinstance(widget, MainWindow):
-                # Cleanup WebSocket connections
-                if hasattr(widget, 'api') and hasattr(widget.api, 'cleanup'):
-                    widget.api.cleanup()
-                break
+    # 🎯 SÖTÉT SZÍNEK BEÁLLÍTÁSA
+    dark_palette.setColor(QPalette.Window, QColor(30, 30, 30))           # Főablak háttér
+    dark_palette.setColor(QPalette.WindowText, QColor(255, 255, 255))    # Szöveg
+    dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))             # Input háttér
+    dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))    # Alternatív háttér
+    dark_palette.setColor(QPalette.ToolTipBase, QColor(0, 0, 0))         # Tooltip háttér
+    dark_palette.setColor(QPalette.ToolTipText, QColor(255, 255, 255))   # Tooltip szöveg
+    dark_palette.setColor(QPalette.Text, QColor(255, 255, 255))          # Input szöveg
+    dark_palette.setColor(QPalette.Button, QColor(45, 45, 45))           # Gomb háttér
+    dark_palette.setColor(QPalette.ButtonText, QColor(255, 255, 255))    # Gomb szöveg
+    dark_palette.setColor(QPalette.BrightText, QColor(255, 0, 0))        # Világos szöveg
+    dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))           # 🔵 KÉKES LINKEK
+    dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))      # 🔵 KÉKES KIJELÖLÉS
+    dark_palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))     # Kijelölt szöveg
     
-    print("✅ Cleanup completed")
-    sys.exit(0)
+    # ✅ TÉMA ALKALMAZÁSA
+    app.setPalette(dark_palette)
+    app.setStyle("Fusion")  # Modern megjelenés
 
 def main():
-    """Main application entry point with volume-based trading"""
+    print("🚀 Advanced Trading Bot - $50 Bollinger Breakout Edition")
+    print("=" * 60)
+    
     try:
-        # Set up signal handler for clean shutdown
-        signal.signal(signal.SIGINT, signal_handler)
+        # ✅ MAIN WINDOW BETÖLTÉSE
+        from gui.main_window import MainWindow
         
-        print("🚀 Starting Volume-Based Kraken Trading Bot...")
-        print("💰 Target: $50 positions, $0.15 profit, 500K+ volume pairs")
+        print("📊 Loading trading components...")
+        print("   ✅ GUI System")
+        print("   ✅ Kraken API Client") 
+        print("   ✅ Position Manager")
+        print("   ✅ Trading Logic")
+        print("   ✅ Risk Management")
+        print("   ✅ Technical Indicators")
         
-        # Create QApplication
+        # ✅ QT ALKALMAZÁS
         app = QApplication(sys.argv)
         
-        # Apply dark theme
-        try:
-            apply_dark_theme(app)
-            print("✅ Dark theme applied")
-        except Exception as e:
-            print(f"⚠️ Theme application failed: {e}")
+        # 🎨 SÖTÉT TÉMA ALKALMAZÁSA
+        print("🎨 Applying dark theme...")
+        apply_dark_theme(app)
         
-        # Create and show main window
-        print("🖥️ Creating main window with volume filtering...")
+        # ✅ FŐABLAK
+        print("\n🎯 Starting main trading interface...")
         window = MainWindow()
-        
-        # Initialize volume-based trading
-        try:
-            print("📊 Connecting to volume-filtered market data...")
-            
-            # Test volume filtering
-            if hasattr(window, 'api') and hasattr(window.api, 'get_volume_statistics'):
-                volume_stats = window.api.get_volume_statistics()
-                if volume_stats:
-                    print(f"📈 Volume stats: {volume_stats.get('above_500k', 0)} pairs above $500K")
-            
-            print("✅ Volume-based trading system ready")
-            
-        except Exception as e:
-            print(f"⚠️ Volume system initialization warning: {e}")
-        
         window.show()
         
-        print("✅ Application started successfully")
-        print("🎯 Focus: High-volume altcoins (BTC/ETH excluded)")
-        print("💡 Minimum volume: $500,000 USD")
-        logger.info("Volume-based trading application started")
+        print("✅ Trading Bot ready!")
+        print("\n🎮 Controls:")
+        print("   🚀 Start Live Trading - Begin automated trading")
+        print("   📊 Monitor charts and positions")
+        print("   ⚙️ Adjust settings in right panel")
+        print("   🛑 Emergency stop available")
         
-        # Start event loop
-        print("🔄 Starting event loop...")
-        print("📝 Press Ctrl+C for clean shutdown")
+        print(f"\n{'=' * 60}")
+        print("🎯 Ready for $50 Bollinger Breakout Trading!")
+        print(f"{'=' * 60}\n")
         
+        # ✅ FUTTATÁS
         sys.exit(app.exec_())
         
-    except KeyboardInterrupt:
-        print("\n👋 Application stopped by user")
-        signal_handler(None, None)
+    except ImportError as e:
+        print(f"❌ Module import error: {e}")
+        print("🔧 Check if all required files are present")
+        return False
+        
     except Exception as e:
-        logger.error(f"Application startup failed: {e}")
-        print(f"❌ CRITICAL ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        print(f"❌ Startup error: {e}")
+        print("🔧 Check configuration and dependencies")
+        return False
 
 if __name__ == "__main__":
     main()

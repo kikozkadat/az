@@ -159,6 +159,9 @@ class KrakenAPIClient:
         self.asset_pairs_cache: Optional[Dict] = None
         self.cache_timestamp: float = 0
 
+        # WebSocket kliens inicializálása (fallback)
+        self.ws_client = None
+
         logger.info("Enhanced KrakenAPIClient initialized with adaptive rate limiting and OHLC pair mapping fix.")
 
     def _make_request(self, endpoint_path: str, params: Optional[Dict] = None,
@@ -207,17 +210,138 @@ class KrakenAPIClient:
             self.rate_limiter.adjust_delay(time.time() - request_start_time, success=False)
         return None
 
-    # ... (a többi metódus változatlan marad a legutóbbi verzióhoz képest, egészen a get_ohlc-ig) ...
-    # Feltételezzük, hogy a start_background_scanning, stop_background_scanning,
-    # get_usd_pairs_with_volume_background, _get_volume_data_background,
-    # _get_volume_concurrent, _get_volume_sequential, _get_batch_ticker_with_priority,
-    # _extract_volume_from_ticker, _update_price_history, _detect_pump,
-    # get_btc_eth_prices_priority, update_promising_coins_cache, get_promising_coins_cache,
-    # _get_cached_asset_pairs, _is_cache_valid, clear_cache, get_background_scan_status,
-    # get_asset_pairs_api, get_usd_pairs_with_volume (legacy) és get_asset_pairs (legacy)
-    # metódusok itt helyezkednek el, változatlanul.
+    def get_current_price(self, pair_altname: str) -> Optional[float]:
+        """
+        Aktuális ár lekérése kereskedési párhoz
+        
+        Args:
+            pair_altname: Kereskedési pár altname formátumban (pl. 'XBTUSD')
+            
+        Returns:
+            Aktuális ár float-ként, vagy None ha sikertelen
+        """
+        try:
+            logger.debug(f"Fetching current price for {pair_altname}")
+            
+            # Első próbálkozás: WebSocket adat (ha elérhető)
+            if hasattr(self, 'ws_client') and self.ws_client:
+                if hasattr(self.ws_client, 'get_current_price'):
+                    ws_price = self.ws_client.get_current_price(pair_altname)
+                    if ws_price is not None and ws_price > 0:
+                        logger.debug(f"Got price from WebSocket for {pair_altname}: {ws_price}")
+                        return float(ws_price)
+            
+            # Második próbálkozás: Ticker API
+            ticker_data = self.get_ticker_data(pair_altname)
+            if ticker_data and 'price' in ticker_data:
+                price = ticker_data['price']
+                if price is not None and price > 0:
+                    logger.debug(f"Got price from Ticker for {pair_altname}: {price}")
+                    return float(price)
+            
+            # Harmadik próbálkozás: OHLC adat (utolsó záró ár)
+            ohlc_data = self.get_ohlc(pair_altname, interval=1, limit=1)
+            if ohlc_data:
+                # Az OHLC visszatérési formátum: {pair_key: [[time, open, high, low, close, vwap, volume, count], ...]}
+                pair_key = None
+                for key in ohlc_data.keys():
+                    if key.upper() == pair_altname.upper() or key.replace('/', '').upper() == pair_altname.upper():
+                        pair_key = key
+                        break
+                
+                if pair_key and ohlc_data[pair_key]:
+                    candles = ohlc_data[pair_key]
+                    if candles and len(candles) > 0:
+                        # OHLC formátum: [time, open, high, low, close, vwap, volume, count]
+                        close_price = float(candles[-1][4])  # záró ár az index 4-en
+                        if close_price > 0:
+                            logger.debug(f"Got price from OHLC for {pair_altname}: {close_price}")
+                            return close_price
+            
+            logger.warning(f"Could not get current price for {pair_altname} from any source")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting current price for {pair_altname}: {e}", exc_info=True)
+            return None
 
-    # JAVÍTOTT METÓDUSOK BEILLESZTÉSE (illetve a get_ohlc cseréje):
+    def get_ticker_data(self, pair_altname: str) -> Optional[Dict]:
+        """
+        Ticker adatok lekérése adott kereskedési párhoz
+        
+        Args:
+            pair_altname: Kereskedési pár altname formátumban
+            
+        Returns:
+            Dictionary ticker adatokkal vagy None ha sikertelen
+        """
+        try:
+            logger.debug(f"Fetching ticker data for {pair_altname}")
+            
+            # Kraken Ticker endpoint használata
+            response = self._make_request('/Ticker', {'pair': pair_altname})
+            
+            if not response:
+                logger.warning(f"No response from Ticker API for {pair_altname}")
+                return None
+            
+            # A Kraken válaszban a pár neve lehet eltérő az input-tól
+            pair_data = None
+            for key, data in response.items():
+                if (key.upper() == pair_altname.upper() or 
+                    key.replace('/', '').upper() == pair_altname.upper() or
+                    key.replace('Z', '').replace('X', '').upper() == pair_altname.replace('Z', '').replace('X', '').upper()):
+                    pair_data = data
+                    break
+            
+            if not pair_data:
+                logger.warning(f"No ticker data found for {pair_altname} in response keys: {list(response.keys())}")
+                return None
+            
+            # Kraken ticker formátum feldolgozása
+            # Ticker formátum: {'a': [ask_price, ask_volume, ask_lot_volume], 'b': [bid_price, ...], 'c': [last_price, last_volume], ...}
+            
+            # Aktuális ár kinyerése (utolsó kereskedési ár)
+            current_price = None
+            if 'c' in pair_data and len(pair_data['c']) > 0:
+                current_price = float(pair_data['c'][0])  # utolsó kereskedési ár
+            
+            # Ask és bid árak
+            ask_price = None
+            bid_price = None
+            if 'a' in pair_data and len(pair_data['a']) > 0:
+                ask_price = float(pair_data['a'][0])
+            if 'b' in pair_data and len(pair_data['b']) > 0:
+                bid_price = float(pair_data['b'][0])
+            
+            # 24 órás volumen
+            volume_24h = None
+            if 'v' in pair_data and len(pair_data['v']) > 1:
+                volume_24h = float(pair_data['v'][1])  # 24 órás volumen
+            
+            # 24 órás high/low
+            high_24h = None
+            low_24h = None
+            if 'h' in pair_data and len(pair_data['h']) > 1:
+                high_24h = float(pair_data['h'][1])  # 24 órás maximum
+            if 'l' in pair_data and len(pair_data['l']) > 1:
+                low_24h = float(pair_data['l'][1])   # 24 órás minimum
+            
+            ticker_result = {
+                'price': current_price,
+                'bid': bid_price,
+                'ask': ask_price,
+                'volume_24h': volume_24h,
+                'high_24h': high_24h,
+                'low_24h': low_24h
+            }
+            
+            logger.debug(f"Parsed ticker data for {pair_altname}: price={current_price}")
+            return ticker_result
+            
+        except Exception as e:
+            logger.error(f"Error getting ticker data for {pair_altname}: {e}", exc_info=True)
+            return None
 
     def get_ohlc(self, altname, interval=1, limit=None) -> Dict: # Visszatérési típus pontosítva Dict-re
         """Get OHLC data for a trading pair"""
@@ -322,14 +446,112 @@ class KrakenAPIClient:
             {"altname": "MATICUSD", "wsname": "MATIC/USD", "base": "MATIC", "quote": "USD", "volume_usd": 2800000}
         ]
 
-    # ... (a többi metódus változatlan marad a legutóbbi verzióhoz képest) ...
-    # Feltételezzük, hogy a get_volume_statistics, _get_rate_limit_stats,
-    # get_top_volume_pairs, update_volume_filter, get_rate_limit_info, _calculate_optimal_delay,
-    # emergency_rate_limit_reset, optimize_batch_sizes, get_optimized_scanning_strategy,
-    # monitor_rate_limit_health, _get_health_recommendations, get_api_performance_stats,
-    # _analyze_endpoint_usage, _calculate_performance_grade, cleanup, __del__,
-    # get_market_data, get_current_price, get_ticker_data, és a LiveTradingThread osztály
-    # itt helyezkednek el, változatlanul.
+    def get_usd_pairs_with_volume(self, min_volume_usd: float = 500000) -> List[Dict]:
+        """USD párok volumen alapú szűréssel - fallback implementáció"""
+        try:
+            logger.info(f"Getting USD pairs with minimum volume: ${min_volume_usd:,.0f}")
+            
+            # Ha van fejlettebb metódus, azt használjuk
+            if hasattr(self, 'get_top_volume_pairs'):
+                return self.get_top_volume_pairs(limit=25, min_volume_usd=min_volume_usd)
+            
+            # Egyszerű fallback implementáció
+            all_pairs = self.get_fallback_pairs()
+            filtered_pairs = [pair for pair in all_pairs if pair.get('volume_usd', 0) >= min_volume_usd]
+            
+            logger.info(f"Filtered to {len(filtered_pairs)} pairs meeting volume requirement")
+            return filtered_pairs
+            
+        except Exception as e:
+            logger.error(f"Error in get_usd_pairs_with_volume: {e}", exc_info=True)
+            return self.get_fallback_pairs()
+
+    def get_market_data(self) -> List[Dict]:
+        """Piaci adatok lekérése a scoring és scanning rendszerhez"""
+        try:
+            logger.info("Fetching market data for scoring system...")
+            
+            # USD párok lekérése
+            pairs = self.get_usd_pairs_with_volume(min_volume_usd=500000)
+            
+            market_data = []
+            for pair_info in pairs[:20]:  # Max 20 pár feldolgozása
+                altname = pair_info.get('altname')
+                if not altname:
+                    continue
+                
+                # Aktuális ár lekérése
+                current_price = self.get_current_price(altname)
+                if not current_price:
+                    continue
+                
+                # Ticker adatok a további információkhoz
+                ticker = self.get_ticker_data(altname)
+                
+                market_entry = {
+                    'symbol': altname,
+                    'price': current_price,
+                    'volume_usd': pair_info.get('volume_usd', 0),
+                    'volume_24h': ticker.get('volume_24h', 0) if ticker else 0,
+                    'high_24h': ticker.get('high_24h', current_price) if ticker else current_price,
+                    'low_24h': ticker.get('low_24h', current_price) if ticker else current_price,
+                    'score': random.uniform(0.3, 0.9)  # Placeholder score
+                }
+                
+                market_data.append(market_entry)
+                
+                # Rate limiting
+                time.sleep(0.5)
+            
+            logger.info(f"Successfully fetched market data for {len(market_data)} pairs")
+            return market_data
+            
+        except Exception as e:
+            logger.error(f"Error fetching market data: {e}", exc_info=True)
+            return []
+
+    def initialize_websocket(self, pair_names: List[str]) -> bool:
+        """WebSocket inicializálás - placeholder implementáció"""
+        try:
+            logger.info(f"WebSocket initialization requested for {len(pair_names)} pairs: {pair_names}")
+            
+            # Itt lenne a valós WebSocket inicializálás
+            # Egyelőre csak logoljuk és visszatérünk False-szal (REST fallback)
+            logger.warning("WebSocket implementation not yet available, using REST API fallback")
+            
+            # Szimuláljuk a sikeres inicializálást néha
+            import random
+            success = random.choice([True, False])
+            
+            if success:
+                logger.info("WebSocket initialization simulated as successful")
+            else:
+                logger.info("WebSocket initialization simulated as failed")
+                
+            return success
+            
+        except Exception as e:
+            logger.error(f"WebSocket initialization error: {e}", exc_info=True)
+            return False
+
+    def cleanup(self):
+        """API kliens tisztítás"""
+        try:
+            logger.info("Cleaning up KrakenAPIClient...")
+            
+            # Session bezárása
+            if hasattr(self, 'session'):
+                self.session.close()
+                
+            # WebSocket bezárása ha van
+            if hasattr(self, 'ws_client') and self.ws_client:
+                if hasattr(self.ws_client, 'close'):
+                    self.ws_client.close()
+                    
+            logger.info("KrakenAPIClient cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
 
     def test_connection(self):
         """Test API connection"""
@@ -359,49 +581,70 @@ class KrakenAPIClient:
             logger.error(f"Connection test failed (Unexpected Error): {e}", exc_info=True)
             return False
 
-# Példa a LiveTradingThread definíciójára, ha az ebben a fájlban lenne
-# (de a jelenlegi struktúra szerint a kraken_api_client.py-ban van)
-# class LiveTradingThread(QThread):
-#     # ... (definíció) ...
-#     pass
+    # Placeholder metódusok az esetleg hiányzó funkciókhoz
+    def get_top_volume_pairs(self, limit: int = 20, min_volume_usd: float = 500000, priority_level: int = 3) -> List[Dict]:
+        """Top volumen párok lekérése - placeholder implementáció"""
+        try:
+            logger.info(f"Getting top {limit} volume pairs with min volume ${min_volume_usd:,.0f}")
+            
+            # Egyszerű fallback implementáció
+            all_pairs = self.get_fallback_pairs()
+            filtered_pairs = [pair for pair in all_pairs if pair.get('volume_usd', 0) >= min_volume_usd]
+            
+            # Volumen szerint rendezés
+            filtered_pairs.sort(key=lambda x: x.get('volume_usd', 0), reverse=True)
+            
+            return filtered_pairs[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error in get_top_volume_pairs: {e}", exc_info=True)
+            return self.get_fallback_pairs()[:limit]
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     client = KrakenAPIClient()
 
-    logger.info("--- Testing KrakenAPIClient (OHLC Pair Mapping Focus) ---")
+    logger.info("--- Testing KrakenAPIClient (with get_current_price) ---")
     
-    # Test test_connection
+    # Test connection
     logger.info("--- Testing API Connection ---")
     if client.test_connection():
         logger.info("API connection test successful.")
     else:
         logger.error("API connection test failed.")
     
+    # Test get_current_price
+    logger.info("--- Testing get_current_price ---")
+    test_pairs_price = ["XBTUSD", "ETHUSD", "ADAUSD"]
+    for pair_test in test_pairs_price:
+        logger.info(f"Getting current price for: {pair_test}")
+        price = client.get_current_price(pair_test)
+        if price:
+            logger.info(f"  Current price for {pair_test}: ${price:.6f}")
+        else:
+            logger.warning(f"  Could not get price for {pair_test}")
+        time.sleep(1.1)
+    
     # Test OHLC data with various altnames
-    test_pairs_ohlc = ["XBTUSD", "ETHUSD", "EURUSD", "ADAUSD", "ADAEUR", "DOT/USD", "XXBTZUSD", "XETHZEUR"]
+    logger.info("--- Testing OHLC Data ---")
+    test_pairs_ohlc = ["XBTUSD", "ETHUSD", "ADAUSD"]
     for pair_test in test_pairs_ohlc:
         logger.info(f"Fetching OHLC for: {pair_test}")
-        # Példa limit paraméter használatára:
-        # ohlc_data = client.get_ohlc(altname=pair_test, interval=15, limit=5) 
-        ohlc_data = client.get_ohlc(altname=pair_test, interval=15)
+        ohlc_data = client.get_ohlc(altname=pair_test, interval=15, limit=5) 
         if ohlc_data:
-            # Az ohlc_data most {"API_PAIR_KEY": [[...], ...]} formátumú
-            # (pl. {"XXBTZUSD": [[...candle_data...]]} ha pair_test="XBTUSD")
-            # Kiírjuk a kulcsot és az első gyertyát, ha van
             if len(ohlc_data.keys()) > 0:
-                actual_pair_key = list(ohlc_data.keys())[0] # Az API által visszaadott pár kulcs
+                actual_pair_key = list(ohlc_data.keys())[0]
                 candle_list = ohlc_data[actual_pair_key]
                 if candle_list:
                     logger.info(f"  Successfully fetched for '{actual_pair_key}' (requested '{pair_test}'). First candle: {candle_list[0]}")
                 else:
-                    logger.warning(f"  Fetched for '{actual_pair_key}' (requested '{pair_test}'), but no candle data returned in the list.")
+                    logger.warning(f"  Fetched for '{actual_pair_key}' (requested '{pair_test}'), but no candle data returned.")
             else:
                 logger.warning(f"  Fetched OHLC for {pair_test}, but the result dictionary is empty.")
         else:
-            logger.warning(f"  Could not get OHLC data for {pair_test}, or data format unexpected. Response: {ohlc_data}")
-        time.sleep(1.1) # Kis szünet a rate limit miatt, mivel a get_ohlc direkt hívást használ
+            logger.warning(f"  Could not get OHLC data for {pair_test}")
+        time.sleep(1.1)
 
     logger.info("--- Testing get_valid_usd_pairs ---")
     valid_pairs = client.get_valid_usd_pairs()
@@ -412,7 +655,15 @@ if __name__ == '__main__':
     else:
         logger.warning("No valid USD pairs found by get_valid_usd_pairs.")
 
-    # Feltételezve, hogy létezik a cleanup metódus (a kommentek alapján igen)
-    if hasattr(client, 'cleanup') and callable(getattr(client, 'cleanup')):
-        client.cleanup()
-    logger.info("--- KrakenAPIClient OHLC testing finished ---")
+    # Test market data
+    logger.info("--- Testing get_market_data ---")
+    market_data = client.get_market_data()
+    if market_data:
+        logger.info(f"Found {len(market_data)} market data entries. First one:")
+        logger.info(f"  {market_data[0]}")
+    else:
+        logger.warning("No market data found.")
+
+    # Cleanup
+    client.cleanup()
+    logger.info("--- KrakenAPIClient testing finished ---")
