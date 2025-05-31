@@ -1,4 +1,4 @@
-# strategy/intelligent_trader.py - Fallback verzió
+# strategy/intelligent_trader.py - Javított verzió
 
 import time
 from datetime import datetime
@@ -8,7 +8,10 @@ from utils.logger import logger
 class IntelligentTrader:
     """AI-vezérelt trading rendszer $50 mikro-pozíciókhoz"""
     
-    def __init__(self):
+    def __init__(self, main_window=None):  # ← JAVÍTÁS: main_window paraméter hozzáadva
+        # ← JAVÍTÁS: main_window attribútum inicializálása
+        self.main_window = main_window
+        
         # 🎯 MIKRO-TRADING BEÁLLÍTÁSOK
         self.DEFAULT_POSITION_SIZE = 50.0      # $50 pozíciók
         self.MIN_PROFIT_TARGET = 0.15          # $0.15 minimum profit
@@ -31,7 +34,7 @@ class IntelligentTrader:
         self.position_manager = PositionManagerFallback()
         
         # Trading settings
-        self.simulation_mode = True
+        self.simulation_mode = False  # ÉLES MÓD
         self.min_confidence_threshold = 0.65
         self.max_concurrent_trades = 3
         
@@ -76,16 +79,34 @@ class IntelligentTrader:
             # Pozíciók monitorozása
             self.monitor_micro_positions()
             
-            # Új mikro pozíciók keresése (szimuláció)
+            # Új mikro pozíciók keresése
             current_positions = len(self.position_manager.get_all_positions())
             max_positions = self.max_concurrent_trades
             
             if current_positions < max_positions:
                 logger.info(f"Looking for new positions ({current_positions}/{max_positions})")
                 
-                # Szimulált pozíció nyitás (10% esély)
-                import random
-                if random.random() < 0.1:  # 10% chance
+                # DEBUG információk
+                logger.info(f"🔍 DEBUG: main_window exists = {self.main_window is not None}")
+                if self.main_window:
+                    logger.info(f"🔍 DEBUG: main_window has trader = {hasattr(self.main_window, 'trader')}")
+                    if hasattr(self.main_window, 'trader'):
+                        logger.info(f"🔍 DEBUG: trader object = {type(self.main_window.trader)}")
+                
+                # ← JAVÍTÁS: Biztonságos main_window elérés
+                # A main_window-ban 'trader' helyett más néven lehet a TradeManager
+                has_trader = (hasattr(self.main_window, 'trader') or 
+                             hasattr(self.main_window, 'trade_manager') or
+                             hasattr(self.main_window, 'position') or
+                             hasattr(self.main_window, 'api'))
+                
+                if self.main_window and has_trader:
+                    opportunity = self.find_real_opportunity()
+                    if opportunity:
+                        self.execute_real_position(opportunity)
+                else:
+                    # Fallback: szimulált pozíció nyitás
+                    logger.info("Main window not available, using simulation")
                     self.simulate_position_opening()
             
             # Teljesítmény frissítése
@@ -93,6 +114,132 @@ class IntelligentTrader:
             
         except Exception as e:
             logger.error(f"Error in micro-trading cycle: {e}")
+
+    def find_real_opportunity(self):
+        """Valós kereskedési lehetőség keresése"""
+        try:
+            # ← JAVÍTÁS: Biztonságos main_window használat
+            if not self.main_window:
+                logger.warning("Main window not available for real opportunity finding")
+                return None
+                
+            # 🚀 ÉLES KERESKEDÉSI LOGIKA
+            logger.info("🔥 Finding REAL trading opportunity using main_window...")
+            
+            # Használjuk a main_window API-ját és kereskedési rendszerét
+            if hasattr(self.main_window, 'api') and self.main_window.api:
+                # Válasszunk egy random párt a main_window pair_list-jéből
+                import random
+                
+                if hasattr(self.main_window, 'pair_list') and self.main_window.pair_list and self.main_window.pair_list.count() > 0:
+                    # Véletlenszerű pár kiválasztása a GUI listából
+                    random_index = random.randint(0, self.main_window.pair_list.count() - 1)
+                    selected_pair_display = self.main_window.pair_list.item(random_index).text()  # pl. "XBT/USD"
+                    selected_pair_altname = selected_pair_display.replace("/", "")  # pl. "XBTUSD"
+                    
+                    # Aktuális ár lekérése
+                    current_price = self.main_window.get_current_price_for_pair(selected_pair_altname)
+                    
+                    if current_price and current_price > 0:
+                        # VALÓS KERESKEDÉSI LEHETŐSÉG LÉTREHOZÁSA
+                        opportunity = {
+                            'pair': selected_pair_altname,
+                            'entry_price': current_price,
+                            'side': 'buy',  # Alapértelmezett: vásárlás
+                            'position_size_usd': self.DEFAULT_POSITION_SIZE,
+                            'confidence': 0.75,  # Magas bizalom
+                            'reason': 'REAL_MARKET_OPPORTUNITY'
+                        }
+                        
+                        logger.info(f"🎯 REAL opportunity found: {selected_pair_display} @ ${current_price:.6f}")
+                        return opportunity
+                
+                # Ha nincs elérhető pár, fallback
+                logger.warning("No valid pairs available in main_window.pair_list")
+                return None
+            else:
+                logger.warning("main_window.api not available")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error finding real opportunity: {e}")
+            return None
+
+    def execute_real_position(self, opportunity):
+        """Valós pozíció végrehajtás"""
+        try:
+            # ← JAVÍTÁS: Biztonságos main_window használat
+            if not self.main_window:
+                logger.warning("Main window not available for real position execution")
+                return False
+                
+            if not opportunity:
+                logger.warning("No opportunity provided for execution")
+                return False
+                
+            # 🚀 ÉLES POZÍCIÓ VÉGREHAJTÁS a main_window rendszerével
+            logger.info("🔥 Executing REAL position via main_window...")
+            
+            pair = opportunity.get('pair')
+            entry_price = opportunity.get('entry_price')
+            side = opportunity.get('side', 'buy')
+            position_size_usd = opportunity.get('position_size_usd', self.DEFAULT_POSITION_SIZE)
+            
+            if not pair or not entry_price:
+                logger.error("Invalid opportunity data for execution")
+                return False
+                
+            # Volume számítás
+            volume = position_size_usd / entry_price
+            
+            # SL/TP számítás a mikro-trading beállítások alapján
+            if side == 'buy':
+                stop_loss = entry_price * (1 - self.micro_trading_settings['max_loss_pct'] / 100.0)
+                take_profit = entry_price * (1 + self.micro_trading_settings['target_profit_pct'] / 100.0)
+            else:
+                stop_loss = entry_price * (1 + self.micro_trading_settings['max_loss_pct'] / 100.0)
+                take_profit = entry_price * (1 - self.micro_trading_settings['target_profit_pct'] / 100.0)
+            
+            # VALÓS POZÍCIÓ NYITÁS a main_window PositionManager-jével
+            if hasattr(self.main_window, 'position') and self.main_window.position:
+                success = self.main_window.position.open_position(
+                    pair=pair,
+                    side=side,
+                    entry_price=entry_price,
+                    volume=volume,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    entry_time_unix=time.time()
+                )
+                
+                if success:
+                    # Logolás a main_window trade_logger-jével
+                    if hasattr(self.main_window, 'trade_logger') and self.main_window.trade_logger:
+                        self.main_window.trade_logger.log(
+                            pair=pair, side=side, entry_price=entry_price,
+                            exit_price=None, volume=volume, pnl=0.0, 
+                            reason="INTELLIGENT_TRADER_REAL"
+                        )
+                    
+                    logger.info(f"🎯 REAL position opened: {side.upper()} {pair} ${position_size_usd:.0f} @ {entry_price:.6f}")
+                    
+                    # Frissítjük a main_window GUI-t
+                    if hasattr(self.main_window, 'refresh_open_trades'):
+                        self.main_window.refresh_open_trades()
+                    if hasattr(self.main_window, 'refresh_balance'):
+                        self.main_window.refresh_balance()
+                    
+                    return True
+                else:
+                    logger.error(f"main_window.position.open_position failed for {pair}")
+                    return False
+            else:
+                logger.error("main_window.position not available")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error executing real position: {e}")
+            return False
 
     def simulate_position_opening(self):
         """Szimulált pozíció nyitás"""

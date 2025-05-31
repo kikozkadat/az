@@ -4,6 +4,29 @@ import pandas as pd
 import numpy as np
 
 class IndicatorEngine:
+    """Technikai indikátor motor - paraméter nélküli inicializálás"""
+    
+    def __init__(self):  # ✅ JAVÍTVA: nincs paraméter
+        """IndicatorEngine inicializálás paraméter nélkül"""
+        # Alapértelmezett beállítások
+        self.default_rsi_period = 14
+        self.default_ema_fast = 9
+        self.default_ema_slow = 21
+        self.default_bb_period = 20
+        self.default_bb_std = 2
+        self.default_atr_period = 14
+        
+        # Számítási cache
+        self.calculation_cache = {}
+        
+    def set_api_client(self, api_client):
+        """API client beállítása (opcionális)"""
+        self.api_client = api_client
+        
+    def connect_api_client(self, api_client):
+        """API client kapcsolat (opcionális)"""
+        self.api_client = api_client
+
     @staticmethod
     def compute_rsi(data, period=14):
         """RSI számítás javított hibakezeléssel"""
@@ -193,24 +216,224 @@ class IndicatorEngine:
             print(f"[ERROR] Volume SMA calculation failed: {e}")
             return pd.Series([1000] * len(data), index=data.index)
 
-    @staticmethod
-    def compute_all_indicators(data):
+    def compute_all_indicators(self, data):
         """Összes indikátor számítása egyszerre"""
         try:
             indicators = {}
             
             # Basic indicators
-            indicators['rsi'] = IndicatorEngine.compute_rsi(data)
-            indicators['ema_fast'], indicators['ema_slow'] = IndicatorEngine.compute_ema_crossover(data)
-            indicators['bb_upper'], indicators['bb_middle'], indicators['bb_lower'] = IndicatorEngine.compute_bollinger(data)
-            indicators['macd'], indicators['macd_signal'], indicators['macd_hist'] = IndicatorEngine.compute_macd(data)
-            indicators['atr'] = IndicatorEngine.compute_atr(data)
-            indicators['williams_r'] = IndicatorEngine.compute_williams_r(data)
-            indicators['stoch_rsi'] = IndicatorEngine.compute_stoch_rsi(data)
-            indicators['volume_sma'] = IndicatorEngine.compute_volume_sma(data)
+            indicators['rsi'] = self.compute_rsi(data)
+            indicators['ema_fast'], indicators['ema_slow'] = self.compute_ema_crossover(data)
+            indicators['bb_upper'], indicators['bb_middle'], indicators['bb_lower'] = self.compute_bollinger(data)
+            indicators['macd'], indicators['macd_signal'], indicators['macd_hist'] = self.compute_macd(data)
+            indicators['atr'] = self.compute_atr(data)
+            indicators['williams_r'] = self.compute_williams_r(data)
+            indicators['stoch_rsi'] = self.compute_stoch_rsi(data)
+            indicators['volume_sma'] = self.compute_volume_sma(data)
             
             return indicators
             
         except Exception as e:
             print(f"[ERROR] All indicators calculation failed: {e}")
             return {}
+
+    def compute_micro_trading_indicators(self, data):
+        """Mikro-trading specifikus indikátorok"""
+        try:
+            indicators = {}
+            
+            # Gyors RSI (5 periódus)
+            indicators['rsi_fast'] = self.compute_rsi(data, period=5)
+            
+            # Bollinger Bands (10 periódus, szűkebb sávok)
+            indicators['bb_upper_fast'], indicators['bb_middle_fast'], indicators['bb_lower_fast'] = self.compute_bollinger(data, period=10, std_factor=1.5)
+            
+            # Gyors EMA-k
+            indicators['ema_3'], indicators['ema_8'] = self.compute_ema_crossover(data, fast=3, slow=8)
+            
+            # MACD gyors beállítás
+            indicators['macd_fast'], indicators['macd_signal_fast'], indicators['macd_hist_fast'] = self.compute_macd(data, fast=5, slow=13, signal=5)
+            
+            # ATR 7 periódus
+            indicators['atr_fast'] = self.compute_atr(data, period=7)
+            
+            # Williams %R gyors
+            indicators['williams_r_fast'] = self.compute_williams_r(data, period=7)
+            
+            return indicators
+            
+        except Exception as e:
+            print(f"[ERROR] Micro trading indicators failed: {e}")
+            return {}
+
+    def compute_scalping_signals(self, data):
+        """Scalping jelek számítása"""
+        try:
+            signals = {}
+            
+            # RSI jelzések
+            rsi = self.compute_rsi(data, period=14)
+            if not rsi.empty:
+                current_rsi = rsi.iloc[-1]
+                signals['rsi_oversold'] = current_rsi < 30
+                signals['rsi_overbought'] = current_rsi > 70
+                signals['rsi_neutral'] = 30 <= current_rsi <= 70
+                signals['rsi_value'] = current_rsi
+            
+            # Bollinger Bands jelzések
+            bb_upper, bb_middle, bb_lower = self.compute_bollinger(data)
+            if not bb_upper.empty and not data.empty:
+                current_price = data['close'].iloc[-1]
+                upper_price = bb_upper.iloc[-1]
+                lower_price = bb_lower.iloc[-1]
+                middle_price = bb_middle.iloc[-1]
+                
+                signals['bb_breakout_up'] = current_price > upper_price
+                signals['bb_breakout_down'] = current_price < lower_price
+                signals['bb_squeeze'] = (upper_price - lower_price) / middle_price < 0.04  # 4% width
+                signals['bb_position'] = (current_price - lower_price) / (upper_price - lower_price)
+            
+            # EMA jelzések
+            ema_fast, ema_slow = self.compute_ema_crossover(data)
+            if not ema_fast.empty and not ema_slow.empty:
+                signals['ema_bullish'] = ema_fast.iloc[-1] > ema_slow.iloc[-1]
+                signals['ema_bearish'] = ema_fast.iloc[-1] < ema_slow.iloc[-1]
+                
+                # EMA crossover detection
+                if len(ema_fast) > 1:
+                    prev_fast = ema_fast.iloc[-2]
+                    prev_slow = ema_slow.iloc[-2]
+                    curr_fast = ema_fast.iloc[-1]
+                    curr_slow = ema_slow.iloc[-1]
+                    
+                    signals['ema_golden_cross'] = (prev_fast <= prev_slow) and (curr_fast > curr_slow)
+                    signals['ema_death_cross'] = (prev_fast >= prev_slow) and (curr_fast < curr_slow)
+            
+            # MACD jelzések
+            macd, macd_signal, macd_hist = self.compute_macd(data)
+            if not macd.empty:
+                signals['macd_bullish'] = macd.iloc[-1] > macd_signal.iloc[-1]
+                signals['macd_bearish'] = macd.iloc[-1] < macd_signal.iloc[-1]
+                signals['macd_histogram_positive'] = macd_hist.iloc[-1] > 0
+                
+                # MACD crossover
+                if len(macd) > 1:
+                    signals['macd_bullish_crossover'] = (macd.iloc[-2] <= macd_signal.iloc[-2]) and (macd.iloc[-1] > macd_signal.iloc[-1])
+                    signals['macd_bearish_crossover'] = (macd.iloc[-2] >= macd_signal.iloc[-2]) and (macd.iloc[-1] < macd_signal.iloc[-1])
+            
+            # Volume jelzések
+            if 'volume' in data.columns:
+                volume_sma = self.compute_volume_sma(data, period=20)
+                if not volume_sma.empty:
+                    current_volume = data['volume'].iloc[-1]
+                    avg_volume = volume_sma.iloc[-1]
+                    signals['volume_spike'] = current_volume > avg_volume * 1.5
+                    signals['high_volume'] = current_volume > avg_volume * 2.0
+                    signals['low_volume'] = current_volume < avg_volume * 0.5
+            
+            return signals
+            
+        except Exception as e:
+            print(f"[ERROR] Scalping signals calculation failed: {e}")
+            return {}
+
+    def get_trading_recommendation(self, data):
+        """Trading ajánlás generálás"""
+        try:
+            signals = self.compute_scalping_signals(data)
+            
+            if not signals:
+                return {'action': 'HOLD', 'confidence': 0.5, 'reason': 'No signals available'}
+            
+            # Scoring system
+            bullish_score = 0
+            bearish_score = 0
+            
+            # RSI scoring
+            if signals.get('rsi_oversold', False):
+                bullish_score += 2
+            elif signals.get('rsi_overbought', False):
+                bearish_score += 2
+            elif signals.get('rsi_neutral', False):
+                bullish_score += 0.5
+            
+            # Bollinger scoring
+            if signals.get('bb_breakout_up', False):
+                bullish_score += 2
+            elif signals.get('bb_breakout_down', False):
+                bearish_score += 2
+            
+            # EMA scoring
+            if signals.get('ema_golden_cross', False):
+                bullish_score += 3
+            elif signals.get('ema_death_cross', False):
+                bearish_score += 3
+            elif signals.get('ema_bullish', False):
+                bullish_score += 1
+            elif signals.get('ema_bearish', False):
+                bearish_score += 1
+            
+            # MACD scoring
+            if signals.get('macd_bullish_crossover', False):
+                bullish_score += 2
+            elif signals.get('macd_bearish_crossover', False):
+                bearish_score += 2
+            elif signals.get('macd_bullish', False):
+                bullish_score += 1
+            elif signals.get('macd_bearish', False):
+                bearish_score += 1
+            
+            # Volume confirmation
+            if signals.get('volume_spike', False):
+                if bullish_score > bearish_score:
+                    bullish_score += 1
+                else:
+                    bearish_score += 1
+            
+            # Decision logic
+            total_score = max(bullish_score, bearish_score)
+            confidence = min(1.0, total_score / 8.0)  # Normalize to 0-1
+            
+            if bullish_score > bearish_score and bullish_score >= 3:
+                action = 'BUY'
+                reason = f"Bullish signals: {bullish_score} vs bearish: {bearish_score}"
+            elif bearish_score > bullish_score and bearish_score >= 3:
+                action = 'SELL'
+                reason = f"Bearish signals: {bearish_score} vs bullish: {bullish_score}"
+            else:
+                action = 'HOLD'
+                reason = f"Insufficient signals (Bull: {bullish_score}, Bear: {bearish_score})"
+            
+            return {
+                'action': action,
+                'confidence': confidence,
+                'reason': reason,
+                'bullish_score': bullish_score,
+                'bearish_score': bearish_score,
+                'signals': signals
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Trading recommendation failed: {e}")
+            return {'action': 'HOLD', 'confidence': 0.0, 'reason': f'Error: {e}'}
+
+    def clear_cache(self):
+        """Cache törlése"""
+        self.calculation_cache.clear()
+
+    def get_cache_size(self):
+        """Cache méret lekérdezése"""
+        return len(self.calculation_cache)
+
+    def get_status(self):
+        """IndicatorEngine státusz"""
+        return {
+            'name': 'IndicatorEngine',
+            'cache_size': self.get_cache_size(),
+            'available_indicators': [
+                'RSI', 'EMA', 'Bollinger Bands', 'MACD', 'ATR', 
+                'Williams %R', 'Stochastic RSI', 'Volume SMA'
+            ],
+            'micro_trading_optimized': True,
+            'scalping_signals': True
+        }
