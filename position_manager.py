@@ -11,12 +11,21 @@ class PositionManager:
         self.positions: Dict[str, dict] = {}  # kulcs: pair, érték: pozíció adatok
         self.max_positions = max_positions
         self.position_history: List[dict] = []
+        self._trade_manager = None  # Lazy loading miatt None
+    
+    @property
+    def trade_manager(self):
+        """Lazy load TradeManager to avoid circular import"""
+        if self._trade_manager is None:
+            from core.trade_manager import TradeManager  # Import csak amikor először kell
+            self._trade_manager = TradeManager()
+        return self._trade_manager
         
     def open_position(self, pair: str, side: str, entry_price: float, volume: float, 
                      stop_loss: Optional[float] = None, take_profit: Optional[float] = None,
                      entry_time_unix: Optional[float] = None, reason: Optional[str] = None) -> bool:
         """
-        Új pozíció nyitása
+        Új pozíció nyitása - ÉLES KERESKEDÉSSEL
         
         Args:
             pair: Trading pair (pl. "BTCUSD")
@@ -44,10 +53,39 @@ class PositionManager:
             if volume <= 0 or entry_price <= 0:
                 logger.error(f"Invalid volume or price: {volume}, {entry_price}")
                 return False
+            
+            # BTC/ETH TILTÁS - ezeket csak szignálként figyeljük!
+            if pair in ['XBTUSD', 'ETHUSD', 'XXBTZUSD', 'XETHZUSD', 'BTCUSD']:
+                logger.warning(f"[POSITION] ❌ {pair} is FORBIDDEN - used as signal only!")
+                return False
                 
             # Entry time meghatározása
             if entry_time_unix is None:
                 entry_time_unix = time.time()
+            
+            # VALÓDI ORDER KÜLDÉSE A KRAKEN API-NAK
+            logger.info(f"[POSITION] 🚀 Sending REAL order to Kraken: {pair} {side} {volume}")
+            order_result = self.trade_manager.place_order(
+                pair=pair,
+                side=side,
+                volume=str(volume),  # Kraken string-et vár
+                price=None  # Market order (azonnali végrehajtás)
+            )
+            
+            # Ellenőrizzük a Kraken válaszát
+            if not order_result:
+                logger.error(f"[POSITION] ❌ Kraken order FAILED - no response")
+                return False
+                
+            if order_result.get('error') and len(order_result['error']) > 0:
+                logger.error(f"[POSITION] ❌ Kraken order FAILED: {order_result['error']}")
+                return False
+            
+            # Ha sikeres volt az order, akkor tároljuk a pozíciót
+            kraken_txid = None
+            if 'result' in order_result and 'txid' in order_result['result']:
+                kraken_txid = order_result['result']['txid'][0] if order_result['result']['txid'] else None
+                logger.info(f"[POSITION] ✅ Kraken order SUCCESS - TXID: {kraken_txid}")
             
             # Pozíció létrehozása
             position = {
@@ -61,15 +99,16 @@ class PositionManager:
                 "entry_time_unix": float(entry_time_unix),  # Kompatibilitás
                 "unrealized_pnl": 0.0,
                 "status": "open",
-                "reason": reason or "MANUAL"  # Nyitás okának rögzítése
+                "reason": reason or "MANUAL",  # Nyitás okának rögzítése
+                "kraken_order_id": kraken_txid  # Kraken order ID tárolása
             }
             
             self.positions[pair] = position
             
-            # Pozícióméret USD-ben számítás (ha szükséges)
+            # Pozícióméret USD-ben számítás
             position_size_usd = volume * entry_price
             
-            logger.info(f"[POSITION] Opened: {pair} {side.upper()} {volume:.6f} @ ${entry_price:.6f} (${position_size_usd:.2f}) - {reason or 'MANUAL'}")
+            logger.info(f"[POSITION] ✅ REAL POSITION OPENED: {pair} {side.upper()} {volume:.6f} @ ${entry_price:.6f} (${position_size_usd:.2f}) - TXID: {kraken_txid}")
             return True
             
         except Exception as e:
@@ -79,7 +118,7 @@ class PositionManager:
     def close_position(self, pair: str, exit_price: Optional[float] = None, 
                       reason: Optional[str] = None) -> Optional[dict]:
         """
-        Pozíció zárása
+        Pozíció zárása - ÉLES KERESKEDÉSSEL
         
         Args:
             pair: Trading pair
@@ -95,6 +134,24 @@ class PositionManager:
                 return None
                 
             position = self.positions[pair].copy()
+            
+            # VALÓDI POZÍCIÓ ZÁRÁSA A KRAKEN API-VAL
+            logger.info(f"[POSITION] 🔴 Closing REAL position on Kraken: {pair}")
+            close_result = self.trade_manager.close_market_position(
+                pair=pair,
+                side=position["side"],
+                volume=str(position["volume"])
+            )
+            
+            # Ellenőrizzük a Kraken válaszát
+            if close_result and close_result.get('error') and len(close_result['error']) > 0:
+                logger.error(f"[POSITION] ⚠️ Kraken close order ERROR: {close_result['error']}")
+                # Folytatjuk a belső könyvelést akkor is, hogy szinkronban maradjunk
+            else:
+                close_txid = None
+                if close_result and 'result' in close_result and 'txid' in close_result['result']:
+                    close_txid = close_result['result']['txid'][0] if close_result['result']['txid'] else None
+                    logger.info(f"[POSITION] ✅ Kraken close order SUCCESS - TXID: {close_txid}")
             
             # Kilépési ár és P&L számítás
             if exit_price:
@@ -126,7 +183,7 @@ class PositionManager:
             if len(self.position_history) > 1000:
                 self.position_history = self.position_history[-1000:]
                 
-            logger.info(f"[POSITION] Closed: {pair} P&L: ${pnl:.2f} ({reason or 'MANUAL'})")
+            logger.info(f"[POSITION] ✅ REAL POSITION CLOSED: {pair} P&L: ${pnl:.2f} ({reason or 'MANUAL'})")
             
             # Visszatérési érték a main_window számára
             return {
