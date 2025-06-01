@@ -522,4 +522,3 @@ class IntelligentTrader:
         """IntelligentTrader fő ciklusa, a run_micro_trading_cycle aliasaként"""
         self.run_micro_trading_cycle(available_balance)
 
-
